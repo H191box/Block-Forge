@@ -1,75 +1,117 @@
-# Block Forge - GBA Sandbox Game Makefile
-# Works with devkitARM or any arm-none-eabi toolchain in PATH
+# ============================================================
+#  Block Forge - GBA Sandbox Game
+#  Makefile for devkitARM (devkitPro) — Docker build
+#
+#  PATRÓN basado en H191box/gems (igual que gravity-lab)
+#  Usa custom block_forge.specs SIN libgba porque block-forge
+#  tiene su propio engine (system.c, input.c, dma.c, etc.)
+# ============================================================
 
-# Toolchain
-ARMCC   = arm-none-eabi-gcc
-ARMBIN  = arm-none-eabi-as
-ARMOBJ  = arm-none-eabi-objcopy
-ARMFIX  = gbafix
+# --- Toolchain (devkitPro inside Docker) ---
+DEVKITPRO ?= /opt/devkitpro
+DEVKITARM ?= $(DEVKITPRO)/devkitARM
+LIBGBA    ?= $(DEVKITPRO)/libgba
 
-# Flags
-ARCH    = -mthumb -mthumb-interwork
-CPU     = -mcpu=arm7tdmi
-CFLAGS  = $(ARCH) $(CPU) -O2 -Wall -ffreestanding -nostdlib \
-	  -Iinclude \
-	  -Isrc -Isrc/main -Isrc/engine -Isrc/game \
-	  -Isrc/game/world -Isrc/game/crafting -Isrc/game/entities \
-	  -Isrc/assets
-LDFLAGS = $(ARCH) $(CPU) -T linker.ld -nostdlib
-ASFLAGS = -mcpu=arm7tdmi -mthumb-interwork
+CC      := $(DEVKITARM)/bin/arm-none-eabi-gcc
+AS      := $(DEVKITARM)/bin/arm-none-eabi-as
+OBJCOPY := $(DEVKITARM)/bin/arm-none-eabi-objcopy
 
-# Directories
-SRCDIR  = src
+# --- Project paths ---
+SRCDIR   = src
 BUILDDIR = build
-OBJDIR  = $(BUILDDIR)/obj
+TARGET   = block_forge
 
-# Source files
-MAIN_C   = $(wildcard $(SRCDIR)/main/*.c)
-ENGINE_C = $(wildcard $(SRCDIR)/engine/*.c)
-GAME_C   = $(wildcard $(SRCDIR)/game/*.c) \
-	   $(wildcard $(SRCDIR)/game/world/*.c) \
-	   $(wildcard $(SRCDIR)/game/crafting/*.c) \
-	   $(wildcard $(SRCDIR)/game/entities/*.c)
-ASSET_C  = $(wildcard $(SRCDIR)/assets/*.c)
-MAIN_S   = $(wildcard $(SRCDIR)/main/*.s)
-ENGINE_S = $(wildcard $(SRCDIR)/engine/*.s)
+# --- Sources ---
+MAIN_C   := $(wildcard $(SRCDIR)/main/*.c)
+ENGINE_C := $(wildcard $(SRCDIR)/engine/*.c)
+GAME_C   := $(wildcard $(SRCDIR)/game/*.c) \
+           $(wildcard $(SRCDIR)/game/world/*.c) \
+           $(wildcard $(SRCDIR)/game/crafting/*.c) \
+           $(wildcard $(SRCDIR)/game/entities/*.c)
+ASSET_C  := $(wildcard $(SRCDIR)/assets/*.c)
 
-# All sources
-CSRC = $(MAIN_C) $(ENGINE_C) $(GAME_C) $(ASSET_C)
-SSRC = $(MAIN_S) $(ENGINE_S)
+# isr.s only — crt0.s is NOT needed (gba.specs provides startup via devkitPro crt0.o)
+ENGINE_S := $(wildcard $(SRCDIR)/engine/*.s)
 
-# Object files
-COBJ = $(patsubst $(SRCDIR)/%.c, $(OBJDIR)/%.o, $(CSRC))
-SOBJ = $(patsubst $(SRCDIR)/%.s, $(OBJDIR)/%.o, $(SSRC))
+CSRC := $(MAIN_C) $(ENGINE_C) $(GAME_C) $(ASSET_C)
+SSRC := $(ENGINE_S)
 
-# Output
-TARGET  = block_forge
-ELF     = $(BUILDDIR)/$(TARGET).elf
-GBA     = $(BUILDDIR)/$(TARGET).gba
-MAP     = $(BUILDDIR)/$(TARGET).map
+COBJ := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(CSRC))
+SOBJ := $(patsubst $(SRCDIR)/%.s,$(BUILDDIR)/%.o,$(SSRC))
 
-# Rules
-all: dirs $(GBA)
+# --- Output ---
+ROM = $(TARGET).gba
 
-dirs:
-	@mkdir -p $(OBJDIR)/main $(OBJDIR)/engine $(OBJDIR)/game/world $(OBJDIR)/game/crafting $(OBJDIR)/game/entities $(OBJDIR)/assets
+# -------------------------------------------------------
+#  COMPILER FLAGS
+#  NO -I$(LIBGBA)/include — block-forge has its own headers
+# -------------------------------------------------------
+CFLAGS := \
+	-mthumb \
+	-mthumb-interwork \
+	-mcpu=arm7tdmi \
+	-O2 \
+	-ffunction-sections \
+	-fdata-sections \
+	-fno-common \
+	-Iinclude \
+	-I$(SRCDIR) \
+	-I$(SRCDIR)/main \
+	-I$(SRCDIR)/engine \
+	-I$(SRCDIR)/game \
+	-I$(SRCDIR)/game/world \
+	-I$(SRCDIR)/game/crafting \
+	-I$(SRCDIR)/game/entities \
+	-I$(SRCDIR)/assets \
+	-Wall -Wextra \
+	-std=gnu99
 
-$(OBJDIR)/%.o: $(SRCDIR)/%.c
+ASFLAGS := -mcpu=arm7tdmi -mthumb-interwork
+
+# -------------------------------------------------------
+#  LINKER FLAGS
+#  CRÍTICO: -specs=block_forge.specs (custom, sin -lgba)
+#  Proporciona: ROM header, ARM→Thumb stub, .data copy, .bss zero
+#  Usa nuestro gba.ld local (con sección .iwram para isr.s)
+# -------------------------------------------------------
+LDFLAGS := \
+	-mthumb \
+	-mthumb-interwork \
+	-mcpu=arm7tdmi \
+	-specs=block_forge.specs \
+	-L$(LIBGBA)/lib \
+	-L. \
+	-Wl,--gc-sections \
+	-Wl,-Map,$(BUILDDIR)/$(TARGET).map
+
+# -------------------------------------------------------
+#  BUILD RULES
+# -------------------------------------------------------
+all: $(BUILDDIR) $(ROM)
+
+$(BUILDDIR):
+	mkdir -p $(BUILDDIR)
+
+$(ROM): $(SOBJ) $(COBJ)
+	$(CC) -mthumb -mthumb-interwork -mcpu=arm7tdmi -specs=block_forge.specs -Wl,--gc-sections -Wl,-Map,$(BUILDDIR)/$(TARGET).map -o $(BUILDDIR)/$(TARGET).elf $(SOBJ) $(COBJ) -L$(LIBGBA)/lib -L. -lgcc -lc -lgcc
+	$(OBJCOPY) -O binary $(BUILDDIR)/$(TARGET).elf $(ROM)
+	@echo "=== ROM built: $(ROM) ==="
+	@ls -la $(ROM)
+
+$(BUILDDIR)/%.o: $(SRCDIR)/%.c
 	@mkdir -p $(dir $@)
-	$(ARMCC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(OBJDIR)/%.o: $(SRCDIR)/%.s
+$(BUILDDIR)/%.o: $(SRCDIR)/%.s
 	@mkdir -p $(dir $@)
-	$(ARMBIN) $(ASFLAGS) -o $@ $<
+	$(AS) $(ASFLAGS) -o $@ $<
 
-$(ELF): $(SOBJ) $(COBJ) linker.ld
-	$(ARMCC) $(LDFLAGS) -o $@ $(SOBJ) $(COBJ) -lgcc -Wl,-Map,$(MAP)
-
-$(GBA): $(ELF)
-	$(ARMOBJ) -O binary -j .gba_header -j .text -j .rodata -j .data $< $@
-	$(ARMFIX) $@ -t"BLOCK FORGE" -cBFOG -mLC
-
+# -------------------------------------------------------
+#  UTILITIES
+# -------------------------------------------------------
 clean:
-	rm -rf $(BUILDDIR)
+	rm -rf $(BUILDDIR) $(ROM)
 
-.PHONY: all clean dirs
+rebuild: clean all
+
+.PHONY: all clean rebuild

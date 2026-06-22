@@ -1,0 +1,16 @@
+%rename lib old_lib
+%rename link old_link
+
+*lib:
+%{!nostdlib:%{!nodefaultlibs:-lgcc -lc -lgcc}}
+
+*startfile:
+crti.o crtbegin.o crt0.o
+
+*endfile:
+crtend.o crtn.o
+
+*link:
+-mthumb-interwork -mthumb -Tgba.ld -nostartfiles
+
+*linker:
