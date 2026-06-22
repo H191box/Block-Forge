@@ -15,7 +15,7 @@ CFLAGS  = $(ARCH) $(CPU) -O2 -Wall -ffreestanding -nostdlib \
           -Isrc -Isrc/main -Isrc/engine -Isrc/game \
           -Isrc/game/world -Isrc/game/crafting -Isrc/game/entities \
           -Isrc/assets
-LDFLAGS = $(ARCH) $(CPU) -T linker.ld -nostdlib -lgcc
+LDFLAGS = $(ARCH) $(CPU) -T linker.ld -nostdlib
 ASFLAGS = -mcpu=arm7tdmi -mthumb-interwork
 
 # Directories
@@ -52,24 +52,24 @@ MAP     = $(BUILDDIR)/$(TARGET).map
 all: dirs $(GBA)
 
 dirs:
-	@mkdir -p $(OBJDIR)/main $(OBJDIR)/engine $(OBJDIR)/game/world $(OBJDIR)/game/crafting $(OBJDIR)/game/entities $(OBJDIR)/assets
+        @mkdir -p $(OBJDIR)/main $(OBJDIR)/engine $(OBJDIR)/game/world $(OBJDIR)/game/crafting $(OBJDIR)/game/entities $(OBJDIR)/assets
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c
-	@mkdir -p $(dir $@)
-	$(ARMCC) $(CFLAGS) -c $< -o $@
+        @mkdir -p $(dir $@)
+        $(ARMCC) $(CFLAGS) -c $< -o $@
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.s
-	@mkdir -p $(dir $@)
-	$(ARMBIN) $(ASFLAGS) -o $@ $<
+        @mkdir -p $(dir $@)
+        $(ARMBIN) $(ASFLAGS) -o $@ $<
 
 $(ELF): $(SOBJ) $(COBJ) linker.ld
-	$(ARMCC) $(LDFLAGS) -o $@ $(SOBJ) $(COBJ) -Wl,-Map,$(MAP)
+        $(ARMCC) $(LDFLAGS) -o $@ $(SOBJ) $(COBJ) -lgcc -Wl,-Map,$(MAP)
 
 $(GBA): $(ELF)
-	$(ARMOBJ) -O binary -j .gba_header -j .text -j .rodata -j .data $< $@
-	$(ARMFIX) $@ -t"BLOCK FORGE" -cBFOG -mLC
+        $(ARMOBJ) -O binary -j .gba_header -j .text -j .rodata -j .data $< $@
+        $(ARMFIX) $@ -t"BLOCK FORGE" -cBFOG -mLC
 
 clean:
-	rm -rf $(BUILDDIR)
+        rm -rf $(BUILDDIR)
 
 .PHONY: all clean dirs
