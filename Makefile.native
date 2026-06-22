@@ -1,0 +1,102 @@
+# ============================================================
+#  Block Forge - Native GBA Build (no Docker)
+#  Uses local toolchain at /home/z/my-project/gba-toolchain-native
+#  NOTE: This project is fully freestanding — no libgba/newlib needed.
+#        It has its own crt0.s, isr.s, and custom engine headers.
+# ============================================================
+
+# --- Toolchain ---
+GCC      := /tmp/arm-toolchain/usr/bin/arm-none-eabi-gcc
+AS       := /tmp/arm-toolchain/usr/bin/arm-none-eabi-as
+OBJCOPY  := /tmp/arm-toolchain/usr/bin/arm-none-eabi-objcopy
+LD       := /tmp/arm-toolchain/usr/bin/arm-none-eabi-ld
+
+# GCC internal libs (for libgcc only — needed for __aeabi_* helpers)
+GCC_LIB  := /tmp/arm-toolchain/usr/lib/gcc/arm-none-eabi/14.2.1/thumb/nofp
+
+# Toolchain local (gba_header.o for ROM header)
+TC       := /home/z/my-project/gba-toolchain-native
+
+# --- Project paths ---
+SRCDIR   := src
+BUILDDIR := build
+TARGET   := block_forge
+ROM      := $(TARGET).gba
+
+# --- Sources ---
+MAIN_C   := $(wildcard $(SRCDIR)/main/*.c)
+ENGINE_C := $(wildcard $(SRCDIR)/engine/*.c)
+GAME_C   := $(wildcard $(SRCDIR)/game/*.c) \
+           $(wildcard $(SRCDIR)/game/world/*.c) \
+           $(wildcard $(SRCDIR)/game/crafting/*.c) \
+           $(wildcard $(SRCDIR)/game/entities/*.c)
+ASSET_C  := $(wildcard $(SRCDIR)/assets/*.c)
+
+# Assembly sources (crt0.s = entry point, isr.s = IRQ dispatcher in IWRAM)
+MAIN_S   := $(wildcard $(SRCDIR)/main/*.s)
+ENGINE_S := $(wildcard $(SRCDIR)/engine/*.s)
+
+CSRC     := $(MAIN_C) $(ENGINE_C) $(GAME_C) $(ASSET_C)
+SSRC     := $(MAIN_S) $(ENGINE_S)
+COBJ     := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(CSRC))
+SOBJ     := $(patsubst $(SRCDIR)/%.s,$(BUILDDIR)/%.o,$(SSRC))
+
+# GBA ROM header object
+GBA_HDR  := $(BUILDDIR)/gba_header.o
+
+# --- Flags ---
+ARCH     := -mthumb -mthumb-interwork -mcpu=arm7tdmi
+
+CFLAGS   := $(ARCH) -O2 \
+            -ffreestanding -nostdlib \
+            -ffunction-sections -fdata-sections \
+            -Iinclude \
+            -I$(SRCDIR) -I$(SRCDIR)/engine -I$(SRCDIR)/main \
+            -I$(SRCDIR)/game -I$(SRCDIR)/game/world \
+            -I$(SRCDIR)/game/crafting -I$(SRCDIR)/game/entities \
+            -I$(SRCDIR)/assets \
+            -Wall -Wextra -std=gnu99
+
+ASFLAGS  := -mcpu=arm7tdmi -mthumb-interwork
+
+LDFLAGS  := --gc-sections -Map=$(BUILDDIR)/$(TARGET).map
+
+# --- Build rules ---
+all: $(BUILDDIR) $(ROM)
+
+$(BUILDDIR):
+	mkdir -p $(BUILDDIR)
+
+$(ROM): $(BUILDDIR)/$(TARGET).elf
+	$(OBJCOPY) -O binary -j .gba_header -j .text -j .rodata -j .data $< $@
+	@echo "=== ROM built: $(ROM) ==="
+	@ls -la $(ROM)
+
+# Link: project's own crt0.s provides _start, linker.ld defines memory layout.
+# We do NOT use toolchain's crt0.o or crti.o/crtn.o since this is freestanding.
+# Only link libgcc for compiler intrinsics (__aeabi_memcpy, etc.)
+$(BUILDDIR)/$(TARGET).elf: $(SOBJ) $(COBJ) $(GBA_HDR) linker.ld
+	$(LD) -T linker.ld -o $@ \
+		$(SOBJ) $(COBJ) $(GBA_HDR) \
+		-L$(GCC_LIB) -lgcc \
+		$(LDFLAGS)
+
+$(BUILDDIR)/%.o: $(SRCDIR)/%.c
+	@mkdir -p $(dir $@)
+	$(GCC) $(CFLAGS) -c -o $@ $<
+
+$(BUILDDIR)/%.o: $(SRCDIR)/%.s
+	@mkdir -p $(dir $@)
+	$(AS) $(ASFLAGS) -o $@ $<
+
+# Copy GBA header from toolchain
+$(GBA_HDR): $(TC)/lib/gba_header.o
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+clean:
+	rm -rf $(BUILDDIR) $(ROM)
+
+rebuild: clean all
+
+.PHONY: all clean rebuild
